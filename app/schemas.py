@@ -213,6 +213,7 @@ class EnrichedItem(BaseModel):
     embedding: Optional[List[float]] = Field(None, description="Text embedding vector")
     signals: Optional[Signals] = Field(None, description="Derived signals")
     time_decay_weight: Optional[float] = Field(None, ge=0.0, le=1.0, description="Time decay weight (0 to 1)")
+    cluster_id: Optional[int] = Field(None, description="Cluster ID assigned during clustering")
 
 
 class EnrichmentRequest(BaseModel):
@@ -244,3 +245,38 @@ class PipelineRunResponse(BaseModel):
     enriched_items: int = Field(..., description="Number of successfully enriched items")
     processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
     items: List[EnrichedItem] = Field(..., description="Enriched items")
+
+
+# Phase 3 Clustering Schemas
+
+class ClusterSummary(BaseModel):
+    """Schema for cluster summary information."""
+    cluster_id: int = Field(..., description="Unique cluster identifier")
+    size: int = Field(..., description="Number of items in this cluster")
+    top_keywords: List[str] = Field(..., description="Top keywords for this cluster")
+    representatives: List[str] = Field(..., description="Representative item titles (up to 3)")
+
+
+class ClusteringRequest(BaseModel):
+    """Schema for clustering request."""
+    items: Optional[List[EnrichedItem]] = Field(None, description="Items to cluster (if not provided, will fetch from enrichment)")
+    k: Optional[int] = Field(None, description="Number of clusters (if not provided, will use heuristic)")
+
+
+class ClusteringResponse(BaseModel):
+    """Schema for clustering response."""
+    clusters: List[ClusterSummary] = Field(..., description="Cluster summaries")
+    items: List[EnrichedItem] = Field(..., description="Items with cluster_id assigned")
+    processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
+    algorithm_used: str = Field(..., description="Clustering algorithm used (KMeans or HDBSCAN)")
+
+
+class EnhancedPipelineRunResponse(BaseModel):
+    """Enhanced schema for full pipeline run response with clustering."""
+    research_run_id: Optional[str] = Field(None, description="ID of the research run")
+    total_items: int = Field(..., description="Total items processed")
+    enriched_items: int = Field(..., description="Number of successfully enriched items")
+    clustered_items: int = Field(..., description="Number of successfully clustered items")
+    clusters: List[ClusterSummary] = Field(..., description="Cluster summaries")
+    processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
+    items: List[EnrichedItem] = Field(..., description="Enriched and clustered items")

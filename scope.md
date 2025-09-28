@@ -41,9 +41,18 @@
 - **Monitoring & Observability**: Enhanced health checks, system metrics, and application monitoring
 - **Production Features**: Rate limiting, error handling, comprehensive logging
 
-#### 🔄 **Phase 3 - Ranking & Export (FUTURE)**
-- **Multi-factor Ranking**: Freshness + engagement + problem density
-- **Export Formats**: JSON, CSV, Markdown reports
+#### ✅ **Phase 3 - Clustering & Theme Discovery (COMPLETED)**
+- **Clustering Algorithms**: KMeans (default) and HDBSCAN support with configurable parameters
+- **Smart Clustering**: Heuristic k calculation (√n) capped at 25 clusters for optimal performance
+- **Cluster Summaries**: TF-IDF keyword extraction and engagement-based representative selection
+- **API Endpoints**: `/cluster/run` and enhanced `/enrich/pipeline/run` with clustering integration
+- **Performance**: Handles 1k+ items in <5 seconds with 1000+ items/second processing rate
+- **Comprehensive Testing**: 18 unit tests covering all functionality and edge cases
+- **Production Ready**: Rate limiting, error handling, deterministic results with fixed seeds
+
+#### 🔄 **Phase 4 - Ranking & Export (FUTURE)**
+- **Multi-factor Ranking**: Freshness + engagement + problem density + cluster quality
+- **Export Formats**: JSON, CSV, Markdown reports with cluster summaries
 - **API Endpoints**: Research results and export functionality
 
 ## 📁 Project Structure
@@ -78,11 +87,14 @@ research-magnet/
 │   │   ├── sentiment.py        # VADER sentiment analysis
 │   │   ├── nlp.py              # spaCy NER entity extraction
 │   │   └── embed.py            # Sentence transformer embeddings
+│   ├── analyze/                 # Analysis modules (Phase 3)
+│   │   ├── cluster.py          # Clustering algorithms and theme discovery
+│   │   └── __init__.py         # Analysis module initialization
 │   ├── utils/                   # Utility modules
 │   │   ├── logging.py          # Enrichment logging utilities
 │   │   └── time_decay.py       # Freshness scoring
-│   ├── rank/                    # Ranking algorithms (Phase 3)
-│   ├── export/                  # Export functionality (Phase 3)
+│   ├── rank/                    # Ranking algorithms (Phase 4)
+│   ├── export/                  # Export functionality (Phase 4)
 │   └── tests/                   # Test suite
 ├── alembic/                     # Database migrations
 │   ├── env.py                   # Alembic environment
@@ -208,7 +220,10 @@ graph TD
 
 ### Enrichment API (Phase 2)
 - `POST /enrich/run` - Enrich items with NLP features
-- `POST /enrich/pipeline/run` - Complete pipeline (ingestion + enrichment)
+- `POST /enrich/pipeline/run` - Complete pipeline (ingestion + enrichment + clustering)
+
+### Clustering API (Phase 3)
+- `POST /cluster/run` - Cluster enriched items into related problem groups
 
 ### Sources API
 - `GET /sources/` - List all data sources

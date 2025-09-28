@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     clustering_min_samples: int = Field(default=5, env="CLUSTERING_MIN_SAMPLES")
     clustering_min_cluster_size: int = Field(default=3, env="CLUSTERING_MIN_CLUSTER_SIZE")
     
+    # Clustering Configuration
+    use_hdbscan: bool = Field(default=False, env="USE_HDBSCAN")
+    max_clusters: int = Field(default=25, env="MAX_CLUSTERS")
+    tfidf_max_features: int = Field(default=1000, env="TFIDF_MAX_FEATURES")
+    clustering_random_seed: int = Field(default=42, env="CLUSTERING_RANDOM_SEED")
+    
     # Export Configuration
     export_format: str = Field(default="json", env="EXPORT_FORMAT")
     export_dir: str = Field(default="./exports", env="EXPORT_DIR")

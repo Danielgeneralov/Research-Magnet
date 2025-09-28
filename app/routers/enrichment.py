@@ -14,7 +14,8 @@ from app.schemas import (
     EnrichmentResponse, 
     EnrichedItem,
     PipelineRunRequest,
-    PipelineRunResponse
+    PipelineRunResponse,
+    EnhancedPipelineRunResponse
 )
 from app.services.ingestion_service import IngestionService
 from app.db import SessionLocal
@@ -24,6 +25,7 @@ from app.enrich.nlp import add_entities
 from app.enrich.embed import add_embeddings
 from app.utils.time_decay import add_time_decay
 from app.utils.logging import get_enrichment_logger
+from app.analyze.cluster import cluster_items
 
 router = APIRouter()
 logger = get_enrichment_logger("enrichment_api")
@@ -132,14 +134,14 @@ async def run_enrichment(
         )
 
 
-@router.post("/pipeline/run", response_model=PipelineRunResponse)
+@router.post("/pipeline/run", response_model=EnhancedPipelineRunResponse)
 async def run_full_pipeline(
     request: PipelineRunRequest,
     req: Request,
     db: SessionLocal = Depends(get_db)
 ):
     """
-    Run the complete pipeline: ingestion + enrichment.
+    Run the complete pipeline: ingestion + enrichment + clustering.
     """
     # Rate limiting
     client_ip = req.client.host
@@ -176,14 +178,21 @@ async def run_full_pipeline(
             half_life_hours=request.half_life_hours
         )
         
+        # Run clustering
+        clustering_result = cluster_items(items=enriched_items)
+        clustered_items = clustering_result["items"]
+        clusters = clustering_result["clusters"]
+        
         processing_time = (time.time() - start_time) * 1000
         
-        return PipelineRunResponse(
+        return EnhancedPipelineRunResponse(
             research_run_id="pipeline_run",  # Placeholder since we don't track run IDs
             total_items=len(items),
             enriched_items=len(enriched_items),
+            clustered_items=len([item for item in clustered_items if item.cluster_id is not None and item.cluster_id >= 0]),
+            clusters=clusters,
             processing_time_ms=processing_time,
-            items=enriched_items
+            items=clustered_items
         )
         
     except Exception as e:
