@@ -99,10 +99,12 @@ async def run_enrichment(
         else:
             # Fetch items from ingestion service
             ingestion_service = IngestionService()
-            items = await ingestion_service.collect_all_sources(
+            ingestion_result = await ingestion_service.run_ingestion(
                 days=request.days,
-                limit=request.limit
+                min_score=10,
+                min_comments=5
             )
+            items = ingestion_result["items"]
             logger.info(f"Fetched {len(items)} items from ingestion service")
         
         if not items:
