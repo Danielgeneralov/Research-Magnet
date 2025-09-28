@@ -4,10 +4,16 @@ Text embeddings using sentence-transformers for enrichment pipeline.
 
 from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
-from app.utils.logging import log_processing_step, log_model_loading, log_batch_processing
+from app.utils.logging import log_processing_step, log_model_loading, log_batch_processing, get_enrichment_logger
+import hashlib
+
+logger = get_enrichment_logger("embeddings")
 
 # Global model instance for lazy loading
 _model: Optional[SentenceTransformer] = None
+
+# Simple in-memory cache for embeddings
+_embedding_cache: Dict[str, List[float]] = {}
 
 
 def _get_model() -> SentenceTransformer:
@@ -40,20 +46,41 @@ def add_embeddings(items: List[Dict[str, Any]], batch_size: int = 64) -> List[Di
     
     model = _get_model()
     
-    # Prepare texts for embedding
-    texts = []
-    for item in items:
+    # Prepare texts for embedding with caching
+    texts_to_process = []
+    cache_hits = 0
+    cache_misses = 0
+    
+    for i, item in enumerate(items):
         title = item.get('title', '')
         body = item.get('body', '')
         combined_text = f"{title} {body}".strip()
         
         if combined_text:
-            texts.append(combined_text)
+            # Create cache key from text hash
+            text_hash = hashlib.md5(combined_text.encode()).hexdigest()
+            
+            if text_hash in _embedding_cache:
+                # Use cached embedding
+                item['embedding'] = _embedding_cache[text_hash]
+                cache_hits += 1
+            else:
+                texts_to_process.append((i, combined_text, text_hash))
+                cache_misses += 1
         else:
-            texts.append("")  # Empty text for items without content
+            # Empty text - create zero embedding
+            embedding_dim = model.get_sentence_embedding_dimension()
+            item['embedding'] = [0.0] * embedding_dim
     
-    # Process in batches
-    total_items = len(texts)
+    if cache_hits > 0:
+        logger.info(f"Embedding cache hits: {cache_hits}, misses: {cache_misses}")
+    
+    # Process only texts that weren't cached
+    if texts_to_process:
+        texts = [text for _, text, _ in texts_to_process]
+        total_items = len(texts)
+    else:
+        total_items = 0
     log_batch_processing("embeddings", batch_size, total_items)
     
     all_embeddings = []
@@ -67,8 +94,6 @@ def add_embeddings(items: List[Dict[str, Any]], batch_size: int = 64) -> List[Di
             all_embeddings.extend(batch_embeddings.tolist())
         except Exception as e:
             # If batch fails, try individual items
-            from app.utils.logging import get_enrichment_logger
-            logger = get_enrichment_logger("embeddings")
             logger.warning(f"Batch embedding failed, processing individually: {e}")
             
             for text in batch_texts:
@@ -86,13 +111,12 @@ def add_embeddings(items: List[Dict[str, Any]], batch_size: int = 64) -> List[Di
                     embedding_dim = model.get_sentence_embedding_dimension()
                     all_embeddings.append([0.0] * embedding_dim)
     
-    # Add embeddings to items
-    for i, item in enumerate(items):
-        if i < len(all_embeddings):
-            item['embedding'] = all_embeddings[i]
-        else:
-            # Fallback: create zero embedding
-            embedding_dim = model.get_sentence_embedding_dimension()
-            item['embedding'] = [0.0] * embedding_dim
+    # Add embeddings to items and cache them
+    if texts_to_process:
+        for i, (original_index, text, text_hash) in enumerate(texts_to_process):
+            embedding = all_embeddings[i]
+            items[original_index]['embedding'] = embedding
+            # Cache the embedding
+            _embedding_cache[text_hash] = embedding
     
     return items

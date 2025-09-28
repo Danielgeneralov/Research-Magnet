@@ -4,8 +4,10 @@ Enrichment API endpoints for Research Magnet Phase 2.
 
 import time
 from typing import List, Dict, Any
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
+from collections import defaultdict
+from datetime import datetime, timedelta
 
 from app.schemas import (
     EnrichmentRequest, 
@@ -26,6 +28,28 @@ from app.utils.logging import get_enrichment_logger
 router = APIRouter()
 logger = get_enrichment_logger("enrichment_api")
 
+# Simple rate limiter
+request_counts = defaultdict(list)
+RATE_LIMIT = 10  # requests per minute
+RATE_WINDOW = 60  # seconds
+
+def check_rate_limit(client_ip: str) -> bool:
+    """Check if client has exceeded rate limit."""
+    now = datetime.now()
+    # Clean old requests
+    request_counts[client_ip] = [
+        req_time for req_time in request_counts[client_ip] 
+        if now - req_time < timedelta(seconds=RATE_WINDOW)
+    ]
+    
+    # Check if under limit
+    if len(request_counts[client_ip]) >= RATE_LIMIT:
+        return False
+    
+    # Add current request
+    request_counts[client_ip].append(now)
+    return True
+
 
 def get_db():
     """Dependency to get database session."""
@@ -39,6 +63,7 @@ def get_db():
 @router.post("/run", response_model=EnrichmentResponse)
 async def run_enrichment(
     request: EnrichmentRequest,
+    req: Request,
     db: SessionLocal = Depends(get_db)
 ):
     """
@@ -47,6 +72,21 @@ async def run_enrichment(
     If items are provided in the request, use them directly.
     Otherwise, fetch items from ingestion service.
     """
+    # Rate limiting
+    client_ip = req.client.host
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 10 requests per minute."
+        )
+    
+    # Input validation
+    if request.items and len(request.items) > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Too many items. Maximum 1000 items per request."
+        )
+    
     start_time = time.time()
     
     try:
@@ -95,22 +135,40 @@ async def run_enrichment(
 @router.post("/pipeline/run", response_model=PipelineRunResponse)
 async def run_full_pipeline(
     request: PipelineRunRequest,
+    req: Request,
     db: SessionLocal = Depends(get_db)
 ):
     """
     Run the complete pipeline: ingestion + enrichment.
     """
+    # Rate limiting
+    client_ip = req.client.host
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 10 requests per minute."
+        )
+    
+    # Input validation
+    if request.limit > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Limit too high. Maximum 1000 items per request."
+        )
+    
     start_time = time.time()
     
     try:
         # Run ingestion
         ingestion_service = IngestionService()
-        research_run_id, items = await ingestion_service.run_research(
+        ingestion_result = await ingestion_service.run_ingestion(
             days=request.days,
-            limit=request.limit
+            min_score=10,
+            min_comments=5
         )
         
-        logger.info(f"Completed ingestion: {len(items)} items, run_id: {research_run_id}")
+        items = ingestion_result["items"]
+        logger.info(f"Completed ingestion: {len(items)} items")
         
         # Run enrichment
         enriched_items = await run_enrichment_pipeline(
@@ -121,7 +179,7 @@ async def run_full_pipeline(
         processing_time = (time.time() - start_time) * 1000
         
         return PipelineRunResponse(
-            research_run_id=research_run_id,
+            research_run_id="pipeline_run",  # Placeholder since we don't track run IDs
             total_items=len(items),
             enriched_items=len(enriched_items),
             processing_time_ms=processing_time,

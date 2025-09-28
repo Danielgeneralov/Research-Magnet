@@ -239,7 +239,7 @@ class PipelineRunRequest(BaseModel):
 
 class PipelineRunResponse(BaseModel):
     """Schema for full pipeline run response."""
-    research_run_id: int = Field(..., description="ID of the research run")
+    research_run_id: Optional[str] = Field(None, description="ID of the research run")
     total_items: int = Field(..., description="Total items processed")
     enriched_items: int = Field(..., description="Number of successfully enriched items")
     processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
