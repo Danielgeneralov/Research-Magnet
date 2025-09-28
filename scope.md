@@ -23,12 +23,15 @@
 - **Rate Limiting**: Respectful API usage with proper delays
 - **Error Handling**: Graceful failure handling and logging
 
-#### 🔄 **Phase 2 - NLP Pipeline (NEXT)**
-- **Deduplication**: MinHash/SimHash + FAISS embeddings
-- **Keyword Extraction**: KeyBERT and rake-nltk
-- **Sentiment Analysis**: VADER sentiment scoring
-- **Clustering**: K-Means for problem grouping
-- **Problem Detection**: Identify complaint/frustration patterns
+#### ✅ **Phase 2 - NLP Pipeline (COMPLETED)**
+- **Text Normalization**: URL/markdown/HTML removal, whitespace cleanup
+- **Signal Detection**: Question, pain, how-to, number, and goal detection
+- **Domain Classification**: Health, money, dating, career, productivity tags
+- **Sentiment Analysis**: VADER sentiment scoring (-1 to 1)
+- **Entity Extraction**: spaCy NER (PERSON, ORG, LOC, PRODUCT, TIME, MONEY)
+- **Text Embeddings**: Sentence transformer (all-MiniLM-L6-v2, 384-dim)
+- **Time Decay Scoring**: Configurable freshness weights (default 72h half-life)
+- **API Endpoints**: `/enrich/run` and `/enrich/pipeline/run`
 
 #### 🔄 **Phase 3 - Ranking & Export (FUTURE)**
 - **Multi-factor Ranking**: Freshness + engagement + problem density
@@ -62,7 +65,14 @@ research-magnet/
 │   │   ├── reddit_source.py    # Reddit API integration
 │   │   ├── hackernews_source.py # Hacker News API integration
 │   │   └── gnews_source.py     # RSS feed integration
-│   ├── nlp/                     # NLP processing modules (Phase 2)
+│   ├── enrich/                  # NLP enrichment modules (Phase 2)
+│   │   ├── normalize.py        # Text cleaning and signal detection
+│   │   ├── sentiment.py        # VADER sentiment analysis
+│   │   ├── nlp.py              # spaCy NER entity extraction
+│   │   └── embed.py            # Sentence transformer embeddings
+│   ├── utils/                   # Utility modules
+│   │   ├── logging.py          # Enrichment logging utilities
+│   │   └── time_decay.py       # Freshness scoring
 │   ├── rank/                    # Ranking algorithms (Phase 3)
 │   ├── export/                  # Export functionality (Phase 3)
 │   └── tests/                   # Test suite
@@ -183,6 +193,10 @@ graph TD
 - `GET /ingest/sources/status` - Check source status
 - `GET /ingest/sources/{source}/test` - Test individual sources
 - `GET /ingest/health` - Ingestion service health
+
+### Enrichment API (Phase 2)
+- `POST /enrich/run` - Enrich items with NLP features
+- `POST /enrich/pipeline/run` - Complete pipeline (ingestion + enrichment)
 
 ### Sources API
 - `GET /sources/` - List all data sources

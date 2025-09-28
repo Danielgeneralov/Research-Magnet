@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 
 from app.config import settings
-from app.routers import health, research, sources, export, ingestion
+from app.routers import health, research, sources, export, ingestion, enrichment
 from app.db import engine
 from app.models import Base
 
@@ -41,6 +41,7 @@ app.include_router(research.router, prefix="/research", tags=["research"])
 app.include_router(sources.router, prefix="/sources", tags=["sources"])
 app.include_router(export.router, prefix="/export", tags=["export"])
 app.include_router(ingestion.router, prefix="/ingest", tags=["ingestion"])
+app.include_router(enrichment.router, prefix="/enrich", tags=["enrichment"])
 
 
 @app.on_event("startup")

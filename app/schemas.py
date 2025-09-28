@@ -3,8 +3,8 @@ Pydantic schemas for Research Magnet API.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any, Union
+from pydantic import BaseModel, Field, validator
 
 
 class ResearchRunBase(BaseModel):
@@ -176,3 +176,71 @@ class ErrorResponse(BaseModel):
     error: str
     detail: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.now)
+
+
+# Phase 2 Enrichment Schemas
+
+class Entity(BaseModel):
+    """Schema for extracted entities."""
+    text: str = Field(..., description="The entity text")
+    label: str = Field(..., description="The entity label (ORG, PERSON, LOC, etc.)")
+
+
+class Signals(BaseModel):
+    """Schema for derived signals from text analysis."""
+    is_question: int = Field(0, ge=0, le=1, description="1 if text contains a question")
+    pain_markers: int = Field(0, ge=0, le=1, description="1 if text contains pain indicators")
+    how_to_markers: int = Field(0, ge=0, le=1, description="1 if text contains how-to indicators")
+    has_numbers: int = Field(0, ge=0, le=1, description="1 if text contains numbers")
+    has_measurable_goal: int = Field(0, ge=0, le=1, description="1 if text contains measurable goals")
+    domain_tags: List[str] = Field(default_factory=list, description="Detected domain tags")
+
+
+class EnrichedItem(BaseModel):
+    """Schema for enriched research items with NLP features."""
+    # Original fields
+    source: str = Field(..., description="Data source (reddit, hackernews, etc.)")
+    title: str = Field(..., description="Item title")
+    body: Optional[str] = Field(None, description="Item body content")
+    url: Optional[str] = Field(None, description="Item URL")
+    created_utc: Optional[float] = Field(None, description="Unix timestamp of creation")
+    score: Optional[int] = Field(None, description="Upvote/score count")
+    num_comments: Optional[int] = Field(None, description="Number of comments")
+    
+    # Enriched fields
+    sentiment: Optional[float] = Field(None, ge=-1.0, le=1.0, description="Sentiment score (-1 to 1)")
+    entities: List[Entity] = Field(default_factory=list, description="Extracted entities")
+    embedding: Optional[List[float]] = Field(None, description="Text embedding vector")
+    signals: Optional[Signals] = Field(None, description="Derived signals")
+    time_decay_weight: Optional[float] = Field(None, ge=0.0, le=1.0, description="Time decay weight (0 to 1)")
+
+
+class EnrichmentRequest(BaseModel):
+    """Schema for enrichment request."""
+    items: Optional[List[Dict[str, Any]]] = Field(None, description="Items to enrich (if not provided, will fetch from ingestion)")
+    days: int = Field(7, ge=1, le=30, description="Days of data to fetch if items not provided")
+    limit: int = Field(200, ge=1, le=1000, description="Maximum items to process")
+    half_life_hours: int = Field(72, ge=1, le=168, description="Half-life for time decay in hours")
+
+
+class EnrichmentResponse(BaseModel):
+    """Schema for enrichment response."""
+    count: int = Field(..., description="Number of enriched items")
+    items: List[EnrichedItem] = Field(..., description="Enriched items")
+    processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
+
+
+class PipelineRunRequest(BaseModel):
+    """Schema for full pipeline run request."""
+    days: int = Field(7, ge=1, le=30, description="Days of data to fetch")
+    limit: int = Field(200, ge=1, le=1000, description="Maximum items to process")
+    half_life_hours: int = Field(72, ge=1, le=168, description="Half-life for time decay in hours")
+
+
+class PipelineRunResponse(BaseModel):
+    """Schema for full pipeline run response."""
+    research_run_id: int = Field(..., description="ID of the research run")
+    total_items: int = Field(..., description="Total items processed")
+    enriched_items: int = Field(..., description="Number of successfully enriched items")
+    processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
+    items: List[EnrichedItem] = Field(..., description="Enriched items")
