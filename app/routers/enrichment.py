@@ -15,7 +15,10 @@ from app.schemas import (
     EnrichedItem,
     PipelineRunRequest,
     PipelineRunResponse,
-    EnhancedPipelineRunResponse
+    EnhancedPipelineRunResponse,
+    FullPipelineResponse,
+    RankedItem,
+    ClusterTrend
 )
 from app.services.ingestion_service import IngestionService
 from app.db import SessionLocal
@@ -25,7 +28,9 @@ from app.enrich.nlp import add_entities
 from app.enrich.embed import add_embeddings
 from app.utils.time_decay import add_time_decay
 from app.utils.logging import get_enrichment_logger
+from app.utils.scoring import rank_items
 from app.analyze.cluster import cluster_items
+from app.analyze.trend import cluster_trends
 
 router = APIRouter()
 logger = get_enrichment_logger("enrichment_api")
@@ -202,6 +207,148 @@ async def run_full_pipeline(
         raise HTTPException(
             status_code=500,
             detail=f"Pipeline failed: {str(e)}"
+        )
+
+
+@router.post("/pipeline/full", response_model=FullPipelineResponse)
+async def run_full_pipeline_with_ranking(
+    request: PipelineRunRequest,
+    req: Request,
+    db: SessionLocal = Depends(get_db)
+):
+    """
+    Run the complete pipeline: ingestion + enrichment + clustering + ranking + trending.
+    """
+    # Rate limiting
+    client_ip = req.client.host
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 10 requests per minute."
+        )
+    
+    # Input validation
+    if request.limit > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Limit too high. Maximum 1000 items per request."
+        )
+    
+    start_time = time.time()
+    
+    try:
+        # Run ingestion
+        ingestion_service = IngestionService()
+        ingestion_result = await ingestion_service.run_ingestion(
+            days=request.days,
+            min_score=10,
+            min_comments=5
+        )
+        
+        items = ingestion_result["items"]
+        logger.info(f"Completed ingestion: {len(items)} items")
+        
+        # Run enrichment
+        enriched_items = await run_enrichment_pipeline(
+            items,
+            half_life_hours=request.half_life_hours
+        )
+        
+        # Run clustering
+        clustering_result = cluster_items(items=enriched_items)
+        clustered_items = clustering_result["items"]
+        clusters = clustering_result["clusters"]
+        
+        # Run ranking
+        clustered_data = {
+            "items": [item.dict() for item in clustered_items],
+            "clusters": [cluster.dict() for cluster in clusters]
+        }
+        ranked_items = rank_items(clustered_data, top=50)
+        
+        # Convert to RankedItem objects
+        top_ranked_items = []
+        for item in ranked_items:
+            try:
+                from app.schemas import ProblemScoreBreakdown
+                why_data = item.get("why", {})
+                breakdown = ProblemScoreBreakdown(
+                    engagement_z=why_data.get("engagement_z", 0.0),
+                    neg_sentiment=why_data.get("neg_sentiment", 0.0),
+                    is_question=why_data.get("is_question", 0),
+                    pain_markers=why_data.get("pain_markers", 0),
+                    cluster_density=why_data.get("cluster_density", 0.0),
+                    time_decay=why_data.get("time_decay", 0.0),
+                    weights=why_data.get("weights", {})
+                )
+                
+                ranked_item = RankedItem(
+                    source=item.get('source', 'unknown'),
+                    title=item.get('title', ''),
+                    body=item.get('body'),
+                    url=item.get('url'),
+                    created_utc=item.get('created_utc'),
+                    score=item.get('score'),
+                    num_comments=item.get('num_comments'),
+                    sentiment=item.get('sentiment'),
+                    entities=item.get('entities', []),
+                    embedding=item.get('embedding'),
+                    signals=item.get('signals'),
+                    time_decay_weight=item.get('time_decay_weight'),
+                    cluster_id=item.get('cluster_id'),
+                    problem_score=item.get('problem_score', 0.0),
+                    why=breakdown
+                )
+                top_ranked_items.append(ranked_item)
+            except Exception as e:
+                logger.warning(f"Failed to create RankedItem: {e}")
+                continue
+        
+        # Run trend analysis
+        trend_summaries = cluster_trends(
+            [item.dict() for item in clustered_items], 
+            [cluster.dict() for cluster in clusters]
+        )
+        
+        # Convert to ClusterTrend objects
+        cluster_trends_list = []
+        for trend_data in trend_summaries:
+            try:
+                cluster_trend = ClusterTrend(
+                    cluster_id=trend_data["cluster_id"],
+                    trend=trend_data["trend"],
+                    last_count=trend_data["last_count"],
+                    sma_short=trend_data["sma_short"],
+                    sma_long=trend_data["sma_long"],
+                    series_tail=trend_data["series_tail"],
+                    top_keywords=trend_data.get("top_keywords"),
+                    representatives=trend_data.get("representatives"),
+                    size=trend_data.get("size")
+                )
+                cluster_trends_list.append(cluster_trend)
+            except Exception as e:
+                logger.warning(f"Failed to create ClusterTrend: {e}")
+                continue
+        
+        processing_time = (time.time() - start_time) * 1000
+        
+        return FullPipelineResponse(
+            research_run_id="full_pipeline_run",
+            total_items=len(items),
+            enriched_items=len(enriched_items),
+            clustered_items=len([item for item in clustered_items if item.cluster_id is not None and item.cluster_id >= 0]),
+            clusters=clusters,
+            ranked_top=top_ranked_items,
+            cluster_trends=cluster_trends_list,
+            processing_time_ms=processing_time,
+            items=clustered_items
+        )
+        
+    except Exception as e:
+        logger.error(f"Full pipeline with ranking failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Full pipeline failed: {str(e)}"
         )
 
 

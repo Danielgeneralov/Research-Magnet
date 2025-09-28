@@ -1,0 +1,198 @@
+"""
+Ranking API endpoints for Research Magnet Phase 4.
+Provides Problem Score computation and ranking functionality.
+"""
+
+import time
+from typing import List, Dict, Any
+from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+from app.schemas import (
+    RankingRequest,
+    RankingResponse,
+    RankedItem,
+    ProblemScoreBreakdown,
+    EnrichedItem,
+    ClusterSummary
+)
+from app.services.ingestion_service import IngestionService
+from app.db import SessionLocal
+from app.enrich.normalize import normalize_items
+from app.enrich.sentiment import add_sentiment
+from app.enrich.nlp import add_entities
+from app.enrich.embed import add_embeddings
+from app.utils.time_decay import add_time_decay
+from app.utils.scoring import rank_items
+from app.analyze.cluster import cluster_items
+from app.utils.logging import get_enrichment_logger
+
+router = APIRouter()
+logger = get_enrichment_logger("ranking_api")
+
+# Simple rate limiter
+request_counts = defaultdict(list)
+RATE_LIMIT = 10  # requests per minute
+RATE_WINDOW = 60  # seconds
+
+def check_rate_limit(client_ip: str) -> bool:
+    """Check if client has exceeded rate limit."""
+    now = datetime.now()
+    # Clean old requests
+    request_counts[client_ip] = [
+        req_time for req_time in request_counts[client_ip] 
+        if now - req_time < timedelta(seconds=RATE_WINDOW)
+    ]
+    
+    # Check if under limit
+    if len(request_counts[client_ip]) >= RATE_LIMIT:
+        return False
+    
+    # Add current request
+    request_counts[client_ip].append(now)
+    return True
+
+
+def get_db():
+    """Dependency to get database session."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@router.post("/run", response_model=RankingResponse)
+async def run_ranking(
+    request: RankingRequest,
+    req: Request,
+    db: SessionLocal = Depends(get_db)
+):
+    """
+    Run ranking pipeline to compute Problem Scores and rank items.
+    
+    If items and clusters are provided in the request, use them directly.
+    Otherwise, fetch items from ingestion service and run full pipeline.
+    """
+    # Rate limiting
+    client_ip = req.client.host
+    if not check_rate_limit(client_ip):
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 10 requests per minute."
+        )
+    
+    # Input validation
+    if request.limit > 1000:
+        raise HTTPException(
+            status_code=400,
+            detail="Limit too high. Maximum 1000 items per request."
+        )
+    
+    if request.top > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="Top parameter too high. Maximum 500 items."
+        )
+    
+    start_time = time.time()
+    
+    try:
+        # Get items and clusters
+        if request.items and request.clusters:
+            # Use provided items and clusters
+            items = [item.dict() if hasattr(item, 'dict') else item for item in request.items]
+            clusters = [cluster.dict() if hasattr(cluster, 'dict') else cluster for cluster in request.clusters]
+            logger.info(f"Using {len(items)} provided items and {len(clusters)} clusters for ranking")
+        else:
+            # Run full pipeline to get items and clusters
+            ingestion_service = IngestionService()
+            ingestion_result = await ingestion_service.run_ingestion(
+                days=request.days,
+                min_score=10,
+                min_comments=5
+            )
+            
+            items = ingestion_result["items"]
+            logger.info(f"Fetched {len(items)} items from ingestion service")
+            
+            # Run enrichment
+            items = normalize_items(items)
+            items = add_sentiment(items)
+            items = add_entities(items)
+            items = add_embeddings(items)
+            items = add_time_decay(items)
+            
+            # Run clustering
+            clustering_result = cluster_items(items=[EnrichedItem(**item) for item in items])
+            items = [item.dict() for item in clustering_result["items"]]
+            clusters = [cluster.dict() for cluster in clustering_result["clusters"]]
+            
+            logger.info(f"Completed enrichment and clustering: {len(items)} items, {len(clusters)} clusters")
+        
+        if not items:
+            return RankingResponse(
+                top_items=[],
+                total_items=0,
+                processing_time_ms=0.0
+            )
+        
+        # Run ranking
+        clustered_data = {"items": items, "clusters": clusters}
+        ranked_items = rank_items(clustered_data, top=request.top)
+        
+        # Convert to RankedItem objects
+        top_ranked_items = []
+        for item in ranked_items:
+            try:
+                # Create ProblemScoreBreakdown
+                why_data = item.get("why", {})
+                breakdown = ProblemScoreBreakdown(
+                    engagement_z=why_data.get("engagement_z", 0.0),
+                    neg_sentiment=why_data.get("neg_sentiment", 0.0),
+                    is_question=why_data.get("is_question", 0),
+                    pain_markers=why_data.get("pain_markers", 0),
+                    cluster_density=why_data.get("cluster_density", 0.0),
+                    time_decay=why_data.get("time_decay", 0.0),
+                    weights=why_data.get("weights", {})
+                )
+                
+                # Create RankedItem
+                ranked_item = RankedItem(
+                    source=item.get('source', 'unknown'),
+                    title=item.get('title', ''),
+                    body=item.get('body'),
+                    url=item.get('url'),
+                    created_utc=item.get('created_utc'),
+                    score=item.get('score'),
+                    num_comments=item.get('num_comments'),
+                    sentiment=item.get('sentiment'),
+                    entities=item.get('entities', []),
+                    embedding=item.get('embedding'),
+                    signals=item.get('signals'),
+                    time_decay_weight=item.get('time_decay_weight'),
+                    cluster_id=item.get('cluster_id'),
+                    problem_score=item.get('problem_score', 0.0),
+                    why=breakdown
+                )
+                top_ranked_items.append(ranked_item)
+            except Exception as e:
+                logger.warning(f"Failed to create RankedItem: {e}")
+                continue
+        
+        processing_time = (time.time() - start_time) * 1000
+        
+        return RankingResponse(
+            top_items=top_ranked_items,
+            total_items=len(items),
+            processing_time_ms=processing_time
+        )
+        
+    except Exception as e:
+        logger.error(f"Ranking failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ranking failed: {str(e)}"
+        )

@@ -3,7 +3,7 @@ Pydantic schemas for Research Magnet API.
 """
 
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Tuple
 from pydantic import BaseModel, Field, validator
 
 
@@ -280,3 +280,79 @@ class EnhancedPipelineRunResponse(BaseModel):
     clusters: List[ClusterSummary] = Field(..., description="Cluster summaries")
     processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
     items: List[EnrichedItem] = Field(..., description="Enriched and clustered items")
+
+
+# Phase 4 Ranking & Trending Schemas
+
+class ProblemScoreBreakdown(BaseModel):
+    """Schema for Problem Score breakdown components."""
+    engagement_z: float = Field(..., description="Z-score of engagement (score + comments)")
+    neg_sentiment: float = Field(..., description="Negative sentiment component (max(0, -sentiment))")
+    is_question: int = Field(..., description="Question signal (0 or 1)")
+    pain_markers: int = Field(..., description="Pain markers signal (0 or 1)")
+    cluster_density: float = Field(..., description="Cluster density (size / DENSITY_NORM)")
+    time_decay: float = Field(..., description="Time decay weight (0 to 1)")
+    weights: Dict[str, float] = Field(..., description="Scoring weights used")
+
+
+class RankedItem(EnrichedItem):
+    """Schema for ranked item with Problem Score."""
+    problem_score: float = Field(..., description="Overall Problem Score")
+    why: ProblemScoreBreakdown = Field(..., description="Score breakdown explanation")
+
+
+class RankingRequest(BaseModel):
+    """Schema for ranking request."""
+    items: Optional[List[EnrichedItem]] = Field(None, description="Items to rank (if not provided, will fetch from pipeline)")
+    clusters: Optional[List[ClusterSummary]] = Field(None, description="Cluster summaries (if not provided, will fetch from pipeline)")
+    days: int = Field(7, ge=1, le=30, description="Days of data to fetch if items not provided")
+    limit: int = Field(200, ge=1, le=1000, description="Maximum items to process")
+    top: int = Field(50, ge=1, le=500, description="Number of top items to return")
+
+
+class RankingResponse(BaseModel):
+    """Schema for ranking response."""
+    top_items: List[RankedItem] = Field(..., description="Top ranked items")
+    total_items: int = Field(..., description="Total items processed")
+    processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
+
+
+class ClusterTrend(BaseModel):
+    """Schema for cluster trend information."""
+    cluster_id: int = Field(..., description="Cluster identifier")
+    trend: str = Field(..., description="Trend direction: rising, falling, or flat")
+    last_count: int = Field(..., description="Count in most recent time bucket")
+    sma_short: float = Field(..., description="Short-term moving average")
+    sma_long: float = Field(..., description="Long-term moving average")
+    series_tail: List[Tuple[int, int]] = Field(..., description="Last 10 time buckets (bucket_id, count)")
+    top_keywords: Optional[List[str]] = Field(None, description="Top keywords for this cluster")
+    representatives: Optional[List[str]] = Field(None, description="Representative item titles")
+    size: Optional[int] = Field(None, description="Total cluster size")
+
+
+class TrendRequest(BaseModel):
+    """Schema for trend analysis request."""
+    items: Optional[List[EnrichedItem]] = Field(None, description="Items to analyze (if not provided, will fetch from pipeline)")
+    clusters: Optional[List[ClusterSummary]] = Field(None, description="Cluster summaries (if not provided, will fetch from pipeline)")
+    days: int = Field(7, ge=1, le=30, description="Days of data to fetch if items not provided")
+    limit: int = Field(200, ge=1, le=1000, description="Maximum items to process")
+
+
+class TrendResponse(BaseModel):
+    """Schema for trend analysis response."""
+    trends: List[ClusterTrend] = Field(..., description="Cluster trend summaries")
+    total_items: int = Field(..., description="Total items analyzed")
+    processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
+
+
+class FullPipelineResponse(BaseModel):
+    """Schema for full pipeline response with ranking and trending."""
+    research_run_id: Optional[str] = Field(None, description="ID of the research run")
+    total_items: int = Field(..., description="Total items processed")
+    enriched_items: int = Field(..., description="Number of successfully enriched items")
+    clustered_items: int = Field(..., description="Number of successfully clustered items")
+    clusters: List[ClusterSummary] = Field(..., description="Cluster summaries")
+    ranked_top: List[RankedItem] = Field(..., description="Top ranked items")
+    cluster_trends: List[ClusterTrend] = Field(..., description="Cluster trend summaries")
+    processing_time_ms: Optional[float] = Field(None, description="Total processing time in milliseconds")
+    items: List[EnrichedItem] = Field(..., description="All processed items")

@@ -48,6 +48,23 @@ class Settings(BaseSettings):
     export_format: str = Field(default="json", env="EXPORT_FORMAT")
     export_dir: str = Field(default="./exports", env="EXPORT_DIR")
     
+    # Phase 4 Scoring Configuration
+    w_e: float = Field(default=0.35, env="W_E")
+    w_n: float = Field(default=0.20, env="W_N")
+    w_q: float = Field(default=0.15, env="W_Q")
+    w_p: float = Field(default=0.15, env="W_P")
+    w_d: float = Field(default=0.10, env="W_D")
+    w_t: float = Field(default=0.05, env="W_T")
+    half_life_hours: int = Field(default=72, env="HALF_LIFE_HOURS")
+    density_norm: float = Field(default=20.0, env="DENSITY_NORM")
+    
+    # Phase 4 Trend Detection Configuration
+    trend_bucket_hours: int = Field(default=6, env="TREND_BUCKET_HOURS")
+    trend_window_short_h: int = Field(default=24, env="TREND_WINDOW_SHORT_H")
+    trend_window_long_h: int = Field(default=72, env="TREND_WINDOW_LONG_H")
+    trend_delta: float = Field(default=0.15, env="TREND_DELTA")
+    min_support: int = Field(default=3, env="MIN_SUPPORT")
+    
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
